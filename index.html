@@ -1,0 +1,885 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>EPUB / TXT 字数统计器</title>
+<meta name="description" content="在浏览器本地解析 EPUB / TXT 电子书，统计字数与章节分布，自动识别中文 TXT 的 GBK/UTF-8 编码，数据不上传服务器。">
+<meta name="theme-color" content="#A8311F">
+<link rel="manifest" href="manifest.json">
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect x='12' y='12' width='76' height='76' rx='8' fill='%23A8311F' transform='rotate(-6 50 50)'/%3E%3Ctext x='50' y='64' font-family='Georgia, serif' font-size='46' font-weight='900' fill='%23F2EEE3' text-anchor='middle' transform='rotate(-6 50 50)'%3E%E5%AD%97%3C/text%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@700;900&family=Noto+Sans+SC:wght@400;500;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<style>
+  :root{
+    --bg:#F2EEE3;
+    --bg-card:#FBF9F3;
+    --ink:#2B2922;
+    --ink-soft:#73695A;
+    --line:#CFC6AE;
+    --accent:#A8311F;
+    --accent-ink:#FBF9F3;
+    --jade:#3F6359;
+    --shadow:0 1px 2px rgba(43,41,34,.07), 0 6px 20px rgba(43,41,34,.06);
+    --font-display:'Noto Serif SC', serif;
+    --font-body:'Noto Sans SC', sans-serif;
+    --font-mono:'JetBrains Mono', monospace;
+  }
+  [data-theme="dark"]{
+    --bg:#15161B;
+    --bg-card:#1E1F27;
+    --ink:#E8E2D2;
+    --ink-soft:#9C968A;
+    --line:#34353F;
+    --accent:#E2604A;
+    --accent-ink:#15161B;
+    --jade:#6FA89B;
+    --shadow:0 1px 2px rgba(0,0,0,.35), 0 8px 24px rgba(0,0,0,.4);
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;}
+  body{
+    background:var(--bg);
+    color:var(--ink);
+    font-family:var(--font-body);
+    line-height:1.55;
+    transition:background .25s ease, color .25s ease;
+    min-height:100vh;
+  }
+  .sr-only{position:absolute;width:1px;height:1px;opacity:0;overflow:hidden;}
+  a{color:var(--jade);}
+
+  header{
+    display:flex;align-items:center;justify-content:space-between;
+    padding:1.1rem 1.5rem;
+    border-bottom:1px solid var(--line);
+  }
+  .brand{display:flex;align-items:center;gap:.6rem;}
+  .brand .brand-icon{width:30px;height:30px;display:block;flex-shrink:0;}
+  .brand-text{font-family:var(--font-display);font-weight:700;font-size:1.05rem;letter-spacing:.02em;}
+  .brand-sub{display:block;font-family:var(--font-body);font-weight:400;font-size:.72rem;color:var(--ink-soft);letter-spacing:.05em;}
+  #themeToggle{
+    border:1px solid var(--line);background:var(--bg-card);color:var(--ink);
+    border-radius:999px;padding:.45rem .7rem;cursor:pointer;font-size:1rem;line-height:1;
+    transition:border-color .2s, background .2s;
+  }
+  #themeToggle:hover{border-color:var(--accent);}
+
+  main{max-width:880px;margin:0 auto;padding:2rem 1.5rem 4rem;}
+
+  .hero{
+    position:relative;
+    border:2px dashed var(--line);
+    border-radius:18px;
+    padding:3rem 1.5rem;
+    text-align:center;
+    cursor:pointer;
+    outline-offset:4px;
+    background-image:
+      linear-gradient(var(--line) 1px, transparent 1px),
+      linear-gradient(90deg, var(--line) 1px, transparent 1px);
+    background-size:26px 26px;
+    background-position:center;
+    background-color:transparent;
+    transition:border-color .2s ease, background-color .2s ease;
+  }
+  .hero::before{
+    content:"";
+    position:absolute;inset:0;border-radius:18px;
+    background:var(--bg);opacity:.78;z-index:0;
+  }
+  .hero > *{position:relative;z-index:1;}
+  .hero.drag{border-color:var(--accent);}
+  .hero.drag::before{background:var(--bg-card);}
+  .hero h1{
+    font-family:var(--font-display);font-weight:900;
+    font-size:clamp(1.3rem,3.4vw,1.8rem);margin:0 0 .5rem;
+  }
+  .hero p{margin:0 auto;color:var(--ink-soft);font-size:.92rem;max-width:36ch;}
+  .hero .hint{margin-top:1.4rem;font-size:.82rem;color:var(--ink-soft);}
+  .hero .hint kbd{
+    font-family:var(--font-mono);background:var(--bg-card);border:1px solid var(--line);
+    border-radius:6px;padding:.1rem .4rem;font-size:.8rem;
+  }
+  #progress{
+    margin-top:1rem;font-family:var(--font-mono);font-size:.8rem;color:var(--accent);
+  }
+  #progress[hidden]{display:none;}
+
+  .results-head{
+    display:flex;align-items:center;justify-content:space-between;
+    margin-top:2rem;
+  }
+  .results-head h2{font-family:var(--font-display);font-size:1rem;font-weight:700;margin:0;color:var(--ink-soft);}
+  .text-btn{
+    background:transparent;border:1px solid var(--line);color:var(--ink);
+    border-radius:8px;padding:.4rem .75rem;font-size:.78rem;cursor:pointer;font-family:var(--font-body);
+    transition:border-color .2s;
+  }
+  .text-btn:hover{border-color:var(--accent);}
+
+  #results{margin-top:1rem;display:flex;flex-direction:column;gap:1.25rem;}
+
+  .book-card{
+    background:var(--bg-card);border:1px solid var(--line);border-radius:14px;
+    padding:1.3rem 1.5rem;box-shadow:var(--shadow);
+  }
+  .book-card.error{border-color:var(--accent);}
+  .error-title{color:var(--accent);font-weight:700;margin:0 0 .25rem;font-size:.95rem;}
+  .error-msg{color:var(--ink-soft);font-size:.85rem;margin:0;}
+
+  .book-head{display:flex;align-items:flex-start;justify-content:space-between;gap:1rem;flex-wrap:wrap;}
+  .book-title{font-family:var(--font-display);font-size:1.2rem;font-weight:700;margin:0;}
+  .book-creator{margin:.2rem 0 0;color:var(--ink-soft);font-size:.85rem;}
+  .book-file{margin:.2rem 0 0;color:var(--ink-soft);font-size:.72rem;font-family:var(--font-mono);}
+  .encoding-row{margin:.7rem 0 0;font-size:.78rem;color:var(--ink-soft);}
+  .encoding-row select{
+    border:1px solid var(--line);background:var(--bg);color:var(--ink);
+    border-radius:6px;padding:.2rem .4rem;font-size:.78rem;font-family:var(--font-body);margin-left:.4rem;
+  }
+  .book-actions{display:flex;gap:.4rem;flex-shrink:0;}
+  .icon-btn{
+    border:1px solid var(--line);background:var(--bg);color:var(--ink);
+    border-radius:999px;width:34px;height:34px;cursor:pointer;font-size:.95rem;
+    display:inline-flex;align-items:center;justify-content:center;
+    transition:border-color .2s, color .2s;
+  }
+  .icon-btn:hover{border-color:var(--accent);}
+  .icon-btn:disabled{opacity:.55;cursor:default;}
+
+  .headline{display:flex;align-items:baseline;gap:.4rem;margin:1.1rem 0 .15rem;}
+  .headline-num{font-family:var(--font-mono);font-weight:700;font-size:clamp(2rem,6vw,3rem);color:var(--accent);line-height:1;}
+  .headline-unit{font-family:var(--font-display);font-size:1.1rem;color:var(--ink-soft);}
+  .headline-sub{margin:0 0 1.1rem;font-size:.78rem;color:var(--ink-soft);}
+
+  .chip-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:.6rem;margin-bottom:1.1rem;}
+  .chip{background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:.55rem .7rem;display:flex;flex-direction:column;gap:.15rem;}
+  .chip-label{font-size:.7rem;color:var(--ink-soft);}
+  .chip-value{font-family:var(--font-mono);font-weight:600;font-size:1rem;color:var(--ink);}
+
+  details.chapters{border-top:1px dashed var(--line);padding-top:.6rem;}
+  details.chapters summary{
+    cursor:pointer;font-weight:600;padding:.2rem 0 .4rem 1.1rem;list-style:none;position:relative;
+    font-size:.9rem;
+  }
+  details.chapters summary::-webkit-details-marker{display:none;}
+  details.chapters summary::before{
+    content:"▸";position:absolute;left:0;top:.2rem;color:var(--accent);
+    transition:transform .15s ease;display:inline-block;
+  }
+  details.chapters[open] summary::before{transform:rotate(90deg);}
+
+  ul.chapter-list{list-style:none;margin:.3rem 0 0;padding:0;max-height:380px;overflow-y:auto;}
+  .chapter-row{display:flex;align-items:baseline;gap:.4rem;padding:.38rem .1rem;font-size:.85rem;}
+  .chapter-row .title{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .chapter-row .dots{flex:1 1 auto;overflow:hidden;color:var(--line);margin:0 .15em;}
+  .chapter-row .dots::after{content:"....................................................................................................";}
+  .chapter-row .count{flex:0 0 auto;font-family:var(--font-mono);color:var(--ink-soft);font-size:.8rem;}
+
+  .history{margin-top:3rem;border-top:1px solid var(--line);padding-top:1.5rem;}
+  .history-head{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:.75rem;margin-bottom:1rem;}
+  .history-head h2{font-family:var(--font-display);font-size:1.1rem;margin:0;display:flex;align-items:center;gap:.5rem;}
+  .badge{
+    font-family:var(--font-mono);font-size:.72rem;background:var(--jade);color:var(--bg);
+    border-radius:999px;padding:.1rem .55rem;
+  }
+  .history-toolbar{display:flex;gap:.5rem;flex-wrap:wrap;align-items:center;}
+  select#sortSelect{
+    border:1px solid var(--line);background:var(--bg-card);color:var(--ink);
+    border-radius:8px;padding:.4rem .6rem;font-size:.78rem;font-family:var(--font-body);
+  }
+  #historyList{display:flex;flex-direction:column;gap:1rem;}
+  .empty-hint{color:var(--ink-soft);font-size:.85rem;text-align:center;padding:1.5rem 0;}
+
+  footer{text-align:center;color:var(--ink-soft);font-size:.74rem;padding:1rem 1.5rem 2.5rem;}
+  footer a{color:var(--ink-soft);text-decoration:underline;}
+
+  .toast{
+    position:fixed;left:50%;bottom:1.4rem;transform:translate(-50%,8px);
+    background:var(--ink);color:var(--bg);padding:.6rem 1.1rem;border-radius:8px;
+    font-size:.85rem;opacity:0;transition:opacity .25s ease, transform .25s ease;z-index:50;
+    box-shadow:var(--shadow);
+  }
+  .toast.show{opacity:1;transform:translate(-50%,0);}
+
+  button:focus-visible, [tabindex]:focus-visible, summary:focus-visible, select:focus-visible{
+    outline:2px solid var(--accent);outline-offset:2px;
+  }
+
+  @media (max-width:600px){
+    main{padding:1.4rem 1rem 3rem;}
+    .hero{padding:2.2rem 1rem;}
+    .book-card{padding:1.1rem 1.1rem;}
+    .book-head{flex-direction:column;}
+  }
+  @media (prefers-reduced-motion: reduce){
+    *,*::before,*::after{transition-duration:.001ms !important;animation-duration:.001ms !important;}
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="brand">
+    <svg class="brand-icon" width="30" height="30" viewBox="0 0 100 100" aria-hidden="true" focusable="false">
+      <rect x="12" y="12" width="76" height="76" rx="8" fill="#A8311F" transform="rotate(-6 50 50)"/>
+      <text x="50" y="64" font-family="Georgia, 'Noto Serif SC', serif" font-size="46" font-weight="900"
+            fill="#F2EEE3" text-anchor="middle" transform="rotate(-6 50 50)">字</text>
+    </svg>
+    <span class="brand-text">EPUB / TXT 字数统计器<span class="brand-sub">本地解析 · 不上传文件</span></span>
+  </div>
+  <button id="themeToggle" type="button" aria-label="切换深浅色模式">🌙</button>
+</header>
+
+<main>
+
+  <section id="dropzone" class="hero" tabindex="0" role="button" aria-label="拖拽或点击选择 EPUB 或 TXT 文件，支持多选">
+    <h1>把 EPUB / TXT 拖进来，数一数它有多少字</h1>
+    <p>支持同时拖入多个文件；所有计算都在你的浏览器里完成，文件不会上传到任何服务器。</p>
+    <p class="hint">拖拽文件到这里，或 <kbd>点击</kbd> 选择 .epub / .txt 文件</p>
+    <p id="progress" hidden aria-live="polite"></p>
+  </section>
+  <input type="file" id="fileInput" class="sr-only" accept=".epub,.txt,application/epub+zip,text/plain" multiple aria-hidden="true">
+
+  <div class="results-head">
+    <h2>本次结果</h2>
+    <button class="text-btn" id="clearResults" type="button">清空本次结果</button>
+  </div>
+  <div id="results"></div>
+
+  <section class="history">
+    <div class="history-head">
+      <h2>历史记录 <span class="badge" id="historyCount">0</span></h2>
+      <div class="history-toolbar">
+        <select id="sortSelect" aria-label="排序方式">
+          <option value="date">最近保存</option>
+          <option value="count">字数最多</option>
+          <option value="title">书名</option>
+        </select>
+        <button class="text-btn" id="exportHistory" type="button">导出 JSON</button>
+        <button class="text-btn" id="importHistoryBtn" type="button">导入 JSON</button>
+        <input type="file" id="importHistoryInput" class="sr-only" accept="application/json,.json">
+        <button class="text-btn" id="clearHistory" type="button">清空历史</button>
+      </div>
+    </div>
+    <div id="historyList"></div>
+  </section>
+
+</main>
+
+<footer>
+  数据全部在本地浏览器中处理，关闭页面或清除浏览器数据会清空历史记录（除非已导出备份）。<br>
+  字数统计方法见 <a href="README.md">README</a>。
+</footer>
+
+<script>
+(function () {
+  'use strict';
+
+  /* ---------------- 主题 ---------------- */
+  var root = document.documentElement;
+  var themeToggle = document.getElementById('themeToggle');
+  function applyTheme(t) {
+    root.setAttribute('data-theme', t);
+    themeToggle.textContent = t === 'dark' ? '☀️' : '🌙';
+  }
+  var savedTheme = localStorage.getItem('ewc-theme');
+  if (!savedTheme) {
+    savedTheme = (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) ? 'dark' : 'light';
+  }
+  applyTheme(savedTheme);
+  themeToggle.addEventListener('click', function () {
+    var next = root.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+    localStorage.setItem('ewc-theme', next);
+    applyTheme(next);
+  });
+
+  /* ---------------- 工具函数 ---------------- */
+  function formatNum(n) { return (n || 0).toLocaleString('zh-CN'); }
+
+  function escapeHtml(str) {
+    return String(str).replace(/[&<>"']/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+    });
+  }
+
+  function showToast(msg) {
+    var t = document.createElement('div');
+    t.className = 'toast';
+    t.textContent = msg;
+    document.body.appendChild(t);
+    requestAnimationFrame(function () { t.classList.add('show'); });
+    setTimeout(function () {
+      t.classList.remove('show');
+      setTimeout(function () { t.remove(); }, 300);
+    }, 2200);
+  }
+
+  /* ---------------- 字数统计核心 ---------------- */
+  var CJK_RE = /[\u4e00-\u9fff\u3400-\u4dbf\uf900-\ufaff]/g;
+  var WORD_RE = /[A-Za-z]+(?:'[A-Za-z]+)?/g;
+  var NUM_RE = /\d+/g;
+
+  function countText(text) {
+    var noSpace = text.replace(/\s+/g, '');
+    var charsWithSpace = text.length;
+    var charsNoSpace = noSpace.length;
+    var cjkCount = (noSpace.match(CJK_RE) || []).length;
+    // 注意：英文单词与数字串要在“原始文本”（保留空格）上匹配，
+    // 否则像 "Hello world" 去掉空格后会变成 "Helloworld" 被错误地合并成一个词。
+    var wordMatches = text.match(WORD_RE) || [];
+    var englishWordCount = wordMatches.length;
+    var englishLetterCount = wordMatches.join('').length;
+    var numMatches = text.match(NUM_RE) || [];
+    var numberCount = numMatches.length;
+    var numberDigitCount = numMatches.join('').length;
+    var punctuationCount = Math.max(charsNoSpace - cjkCount - englishLetterCount - numberDigitCount, 0);
+    var wordStyleCount = cjkCount + englishWordCount + numberCount;
+    return {
+      charsWithSpace: charsWithSpace,
+      charsNoSpace: charsNoSpace,
+      cjkCount: cjkCount,
+      englishWordCount: englishWordCount,
+      numberCount: numberCount,
+      punctuationCount: punctuationCount,
+      wordStyleCount: wordStyleCount
+    };
+  }
+
+  function aggregateStats(list) {
+    var keys = ['charsWithSpace', 'charsNoSpace', 'cjkCount', 'englishWordCount', 'numberCount', 'punctuationCount', 'wordStyleCount'];
+    var out = {};
+    keys.forEach(function (k) { out[k] = 0; });
+    list.forEach(function (s) { keys.forEach(function (k) { out[k] += (s[k] || 0); }); });
+    return out;
+  }
+
+  /* ---------------- EPUB 解析 ---------------- */
+  function resolvePath(dir, href) {
+    href = href.split('#')[0];
+    var combined = dir ? dir + href : href;
+    var parts = combined.split('/');
+    var stack = [];
+    parts.forEach(function (p) {
+      if (p === '..') stack.pop();
+      else if (p === '.' || p === '') { /* skip */ }
+      else stack.push(p);
+    });
+    return stack.join('/');
+  }
+
+  function findZipFile(zip, path) {
+    var f = zip.file(path);
+    if (f) return f;
+    try {
+      var decoded = decodeURIComponent(path);
+      f = zip.file(decoded);
+      if (f) return f;
+    } catch (e) { /* ignore malformed escape */ }
+    var lower = path.toLowerCase();
+    var keys = Object.keys(zip.files);
+    for (var i = 0; i < keys.length; i++) {
+      if (keys[i].toLowerCase() === lower) return zip.file(keys[i]);
+    }
+    return null;
+  }
+
+  function parseEpub(file, onProgress) {
+    return JSZip.loadAsync(file).then(function (zip) {
+      var containerFile = findZipFile(zip, 'META-INF/container.xml');
+      if (!containerFile) throw new Error('找不到 META-INF/container.xml，这可能不是有效的 EPUB 文件');
+      return containerFile.async('string').then(function (containerXml) {
+        var containerDoc = new DOMParser().parseFromString(containerXml, 'application/xml');
+        var rootfileEl = containerDoc.querySelector('rootfile');
+        if (!rootfileEl) throw new Error('container.xml 中缺少 rootfile 节点');
+        var opfPath = rootfileEl.getAttribute('full-path');
+        var opfDir = opfPath.indexOf('/') >= 0 ? opfPath.slice(0, opfPath.lastIndexOf('/') + 1) : '';
+        var opfFile = findZipFile(zip, opfPath);
+        if (!opfFile) throw new Error('找不到 OPF 文件：' + opfPath);
+
+        return opfFile.async('string').then(function (opfText) {
+          var opfDoc = new DOMParser().parseFromString(opfText, 'application/xml');
+          var titleEl = opfDoc.getElementsByTagName('dc:title')[0] || opfDoc.getElementsByTagName('title')[0];
+          var creatorEl = opfDoc.getElementsByTagName('dc:creator')[0];
+          var bookTitle = (titleEl && titleEl.textContent.trim()) || file.name.replace(/\.epub$/i, '');
+          var bookCreator = (creatorEl && creatorEl.textContent.trim()) || '';
+
+          var manifestItems = {};
+          var manifestNodes = opfDoc.querySelectorAll('manifest > item');
+          for (var m = 0; m < manifestNodes.length; m++) {
+            var node = manifestNodes[m];
+            manifestItems[node.getAttribute('id')] = {
+              href: node.getAttribute('href'),
+              mediaType: node.getAttribute('media-type') || ''
+            };
+          }
+
+          var spineNodes = opfDoc.querySelectorAll('spine > itemref');
+          var spineIds = [];
+          for (var s = 0; s < spineNodes.length; s++) {
+            // linear="no" 表示该页不在正文阅读顺序中（常见于目录页、封面、广告页等），默认跳过
+            if (spineNodes[s].getAttribute('linear') === 'no') continue;
+            spineIds.push(spineNodes[s].getAttribute('idref'));
+          }
+          if (spineIds.length === 0) throw new Error('spine 中没有章节条目');
+
+          var chapters = [];
+          var idx = 0;
+
+          function processNext() {
+            if (idx >= spineIds.length) {
+              if (chapters.length === 0) throw new Error('没有解析到任何正文章节');
+              var total = aggregateStats(chapters.map(function (c) { return c.stats; }));
+              return { fileName: file.name, title: bookTitle, creator: bookCreator, chapters: chapters, total: total };
+            }
+            var item = manifestItems[spineIds[idx]];
+            var i = idx;
+            idx++;
+            var isHtml = item && (/x?html/i.test(item.mediaType) || /\.(xhtml|html|htm)$/i.test(item.href || ''));
+            if (!item || !isHtml) return processNext();
+
+            var fullPath = resolvePath(opfDir, item.href);
+            var zfile = findZipFile(zip, fullPath);
+            if (!zfile) return processNext();
+
+            return zfile.async('string').then(function (html) {
+              var doc = new DOMParser().parseFromString(html, 'text/html');
+              var junk = doc.querySelectorAll('script, style');
+              for (var j = 0; j < junk.length; j++) junk[j].remove();
+              var text = (doc.body ? doc.body.textContent : doc.documentElement.textContent) || '';
+
+              var chapterTitle = '';
+              var h = doc.querySelector('h1, h2, h3');
+              var titleTag = doc.querySelector('title');
+              if (h && h.textContent.trim()) chapterTitle = h.textContent.trim();
+              else if (titleTag && titleTag.textContent.trim()) chapterTitle = titleTag.textContent.trim();
+              else chapterTitle = (item.href.split('/').pop() || '').replace(/\.x?html?$/i, '');
+              chapterTitle = chapterTitle.replace(/\s+/g, ' ').trim().slice(0, 60) || ('第 ' + (i + 1) + ' 节');
+
+              chapters.push({ title: chapterTitle, stats: countText(text) });
+              if (onProgress) onProgress(i + 1, spineIds.length, chapterTitle);
+
+              if (i % 6 === 0) {
+                return new Promise(function (r) { setTimeout(r, 0); }).then(processNext);
+              }
+              return processNext();
+            });
+          }
+
+          return processNext();
+        });
+      });
+    });
+  }
+
+  /* ---------------- TXT 解析（含编码检测、章节切分） ---------------- */
+  function readFileAsArrayBuffer(file) {
+    return new Promise(function (resolve, reject) {
+      var reader = new FileReader();
+      reader.onload = function () { resolve(reader.result); };
+      reader.onerror = function () { reject(reader.error || new Error('文件读取失败')); };
+      reader.readAsArrayBuffer(file);
+    });
+  }
+
+  // 中文 txt 小说常见编码是 GBK/GB2312，并非 UTF-8。这里先严格尝试 UTF-8，
+  // 解码失败（出现非法字节序列）就自动回退到 GBK（浏览器的 gbk 解码器实际兼容 GB18030）。
+  function decodeTextBuffer(buffer, forceEncoding) {
+    var bytes = new Uint8Array(buffer);
+    if (!forceEncoding && bytes.length >= 3 && bytes[0] === 0xEF && bytes[1] === 0xBB && bytes[2] === 0xBF) {
+      return { text: new TextDecoder('utf-8').decode(bytes.subarray(3)), encoding: 'UTF-8（含 BOM）' };
+    }
+    if (forceEncoding) {
+      var label = { 'utf-8': 'UTF-8', 'gbk': 'GBK / GB2312', 'gb18030': 'GB18030', 'big5': 'Big5（繁体）' }[forceEncoding] || forceEncoding;
+      return { text: new TextDecoder(forceEncoding).decode(bytes), encoding: label + '（手动指定）' };
+    }
+    try {
+      var text = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+      return { text: text, encoding: 'UTF-8' };
+    } catch (e) {
+      try {
+        var text2 = new TextDecoder('gbk').decode(bytes);
+        return { text: text2, encoding: 'GBK / GB2312（自动识别）' };
+      } catch (e2) {
+        return { text: new TextDecoder('utf-8').decode(bytes), encoding: 'UTF-8（可能存在乱码，可手动切换编码重新解析）' };
+      }
+    }
+  }
+
+  // 识别常见的中文章节标题写法："第x章/节/回/卷"、"Chapter N"、序章/楔子/后记等，
+  // 用来把整本 txt 切成与 epub 类似的章节列表；如果一个都没匹配到，就整篇当作一节处理。
+  var CHAPTER_LINE_RE = /^(第[0-9〇零一二三四五六七八九十百千万]+[章节回卷集部篇].{0,30}|[Cc]hapter\s*[0-9]+.{0,30}|序章|楔子|引子|后记|尾声|番外.{0,20})$/;
+
+  function splitTxtChapters(text) {
+    var lines = text.split(/\r\n|\r|\n/);
+    var markers = [];
+    for (var i = 0; i < lines.length; i++) {
+      var trimmed = lines[i].trim();
+      if (trimmed.length > 0 && trimmed.length <= 40 && CHAPTER_LINE_RE.test(trimmed)) {
+        markers.push({ line: i, title: trimmed });
+      }
+    }
+    if (markers.length < 2) {
+      return [{ title: '全文（未检测到章节标记）', text: text }];
+    }
+    var chapters = [];
+    if (markers[0].line > 0) {
+      var preface = lines.slice(0, markers[0].line).join('\n').trim();
+      if (preface.length > 20) chapters.push({ title: '前言 / 简介', text: preface });
+    }
+    for (var k = 0; k < markers.length; k++) {
+      var start = markers[k].line;
+      var end = (k + 1 < markers.length) ? markers[k + 1].line : lines.length;
+      chapters.push({ title: markers[k].title, text: lines.slice(start, end).join('\n') });
+    }
+    return chapters;
+  }
+
+  function parseTxt(file, onProgress, forceEncoding) {
+    return readFileAsArrayBuffer(file).then(function (buffer) {
+      var decoded = decodeTextBuffer(buffer, forceEncoding);
+      var rawChapters = splitTxtChapters(decoded.text);
+      var chapters = [];
+      var idx = 0;
+
+      function processNext() {
+        if (idx >= rawChapters.length) {
+          var total = aggregateStats(chapters.map(function (c) { return c.stats; }));
+          return {
+            fileName: file.name,
+            title: file.name.replace(/\.txt$/i, ''),
+            creator: '',
+            chapters: chapters,
+            total: total,
+            encoding: decoded.encoding,
+            sourceFile: file
+          };
+        }
+        var rc = rawChapters[idx];
+        var i = idx;
+        idx++;
+        chapters.push({ title: rc.title, stats: countText(rc.text) });
+        if (onProgress) onProgress(i + 1, rawChapters.length, rc.title);
+        if (i % 25 === 0) {
+          return new Promise(function (r) { setTimeout(r, 0); }).then(processNext);
+        }
+        return processNext();
+      }
+
+      return processNext();
+    });
+  }
+
+  /* ---------------- 渲染 ---------------- */
+  function statChip(label, value) {
+    return '<div class="chip"><span class="chip-label">' + escapeHtml(label) + '</span>' +
+      '<span class="chip-value">' + formatNum(value) + '</span></div>';
+  }
+
+  function buildBookCard(book, opts) {
+    opts = opts || {};
+    var fromHistory = !!opts.fromHistory;
+    var historyId = opts.historyId || null;
+    var total = book.total;
+
+    var chaptersNorm = book.chapters.map(function (c) {
+      return { title: c.title, charsNoSpace: c.stats ? c.stats.charsNoSpace : c.charsNoSpace };
+    });
+    var noRealChapters = chaptersNorm.length === 1 && /^全文/.test(chaptersNorm[0].title);
+    var chapterCountLabel = noRealChapters ? '未检测到章节标记 · 按全文统计' : ('共 ' + chaptersNorm.length + ' 章');
+
+    var chaptersHtml = chaptersNorm.map(function (c) {
+      return '<li class="chapter-row"><span class="title">' + escapeHtml(c.title) + '</span>' +
+        '<span class="dots" aria-hidden="true"></span>' +
+        '<span class="count">' + formatNum(c.charsNoSpace) + ' 字</span></li>';
+    }).join('');
+
+    var card = document.createElement('article');
+    card.className = 'book-card';
+    card.innerHTML =
+      '<header class="book-head">' +
+        '<div>' +
+          '<h3 class="book-title">' + escapeHtml(book.title) + '</h3>' +
+          (book.creator ? '<p class="book-creator">' + escapeHtml(book.creator) + '</p>' : '') +
+          '<p class="book-file">' + escapeHtml(book.fileName) + ' · ' + chapterCountLabel +
+            (book.encoding ? ' · 编码 ' + escapeHtml(book.encoding) : '') + '</p>' +
+        '</div>' +
+        '<div class="book-actions">' +
+          '<button class="icon-btn" data-action="copy" type="button" title="复制统计结果">⧉</button>' +
+          (fromHistory
+            ? '<button class="icon-btn" data-action="delete" type="button" title="从历史删除">🗑</button>'
+            : '<button class="icon-btn" data-action="save" type="button" title="保存到历史">📥</button>') +
+        '</div>' +
+      '</header>' +
+      (book.sourceFile ? (
+        '<div class="encoding-row">' +
+          '<label>文字显示乱码？换个编码重新解析：' +
+            '<select class="enc-select">' +
+              '<option value="">自动检测</option>' +
+              '<option value="utf-8">UTF-8</option>' +
+              '<option value="gbk">GBK / GB2312</option>' +
+              '<option value="gb18030">GB18030</option>' +
+              '<option value="big5">Big5（繁体）</option>' +
+            '</select>' +
+          '</label>' +
+        '</div>'
+      ) : '') +
+      '<div class="headline">' +
+        '<span class="headline-num">' + formatNum(total.charsNoSpace) + '</span>' +
+        '<span class="headline-unit">字</span>' +
+      '</div>' +
+      '<p class="headline-sub">不含空格的字符总数 · 与大多数小说站的字数统计口径一致</p>' +
+      '<div class="chip-grid">' +
+        statChip('含空格字符数', total.charsWithSpace) +
+        statChip('纯汉字', total.cjkCount) +
+        statChip('英文单词', total.englishWordCount) +
+        statChip('数字串', total.numberCount) +
+        statChip('标点/符号', total.punctuationCount) +
+        statChip('智能字数(汉字+单词+数字)', total.wordStyleCount) +
+      '</div>' +
+      '<details class="chapters">' +
+        '<summary>章节目录（' + chaptersNorm.length + ' 节）</summary>' +
+        '<ul class="chapter-list">' + chaptersHtml + '</ul>' +
+      '</details>';
+
+    card.querySelector('[data-action="copy"]').addEventListener('click', function () {
+      var summary =
+        '《' + book.title + '》' + (book.creator ? ' / ' + book.creator : '') + '\n' +
+        '总字数(不含空格)：' + formatNum(total.charsNoSpace) + '\n' +
+        '含空格字符数：' + formatNum(total.charsWithSpace) + '\n' +
+        '纯汉字：' + formatNum(total.cjkCount) + '\n' +
+        '英文单词：' + formatNum(total.englishWordCount) + '\n' +
+        '数字串：' + formatNum(total.numberCount) + '\n' +
+        '标点/符号：' + formatNum(total.punctuationCount) + '\n' +
+        '智能字数：' + formatNum(total.wordStyleCount) + '\n' +
+        '章节数：' + chaptersNorm.length;
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(summary).then(function () {
+          showToast('已复制统计结果');
+        }).catch(function () { showToast('复制失败，请手动选择文本'); });
+      } else {
+        showToast('当前浏览器不支持自动复制');
+      }
+    });
+
+    var saveBtn = card.querySelector('[data-action="save"]');
+    if (saveBtn) {
+      saveBtn.addEventListener('click', function () {
+        addToHistory(book);
+        saveBtn.textContent = '✓';
+        saveBtn.disabled = true;
+        saveBtn.title = '已保存到历史';
+        showToast('已保存到历史记录');
+        renderHistory();
+      });
+    }
+    var delBtn = card.querySelector('[data-action="delete"]');
+    if (delBtn) {
+      delBtn.addEventListener('click', function () {
+        if (confirm('确定从历史记录中删除《' + book.title + '》吗？')) {
+          removeFromHistory(historyId);
+          card.remove();
+          renderHistory();
+        }
+      });
+    }
+
+    var encSelect = card.querySelector('.enc-select');
+    if (encSelect) {
+      encSelect.addEventListener('change', function () {
+        var enc = encSelect.value || undefined;
+        parseTxt(book.sourceFile, function () {}, enc).then(function (newBook) {
+          var newCard = buildBookCard(newBook, opts);
+          card.replaceWith(newCard);
+        }).catch(function (err) {
+          showToast('重新解析失败：' + (err && err.message ? err.message : err));
+        });
+      });
+    }
+
+    return card;
+  }
+
+  function buildErrorCard(fileName, message) {
+    var card = document.createElement('article');
+    card.className = 'book-card error';
+    card.innerHTML =
+      '<p class="error-title">⚠ 解析失败：' + escapeHtml(fileName) + '</p>' +
+      '<p class="error-msg">' + escapeHtml(message) + '</p>';
+    return card;
+  }
+
+  /* ---------------- 拖拽与文件处理 ---------------- */
+  var dropzone = document.getElementById('dropzone');
+  var fileInput = document.getElementById('fileInput');
+  var progressEl = document.getElementById('progress');
+  var resultsEl = document.getElementById('results');
+  var clearResultsBtn = document.getElementById('clearResults');
+
+  ['dragenter', 'dragover'].forEach(function (evt) {
+    dropzone.addEventListener(evt, function (e) { e.preventDefault(); dropzone.classList.add('drag'); });
+  });
+  ['dragleave', 'drop'].forEach(function (evt) {
+    dropzone.addEventListener(evt, function (e) { e.preventDefault(); dropzone.classList.remove('drag'); });
+  });
+  dropzone.addEventListener('drop', function (e) {
+    var files = Array.prototype.slice.call(e.dataTransfer.files).filter(function (f) { return /\.(epub|txt)$/i.test(f.name); });
+    if (files.length) handleFiles(files);
+    else showToast('请放入 .epub 或 .txt 格式的文件');
+  });
+  dropzone.addEventListener('click', function () { fileInput.click(); });
+  dropzone.addEventListener('keydown', function (e) {
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fileInput.click(); }
+  });
+  fileInput.addEventListener('change', function () {
+    if (fileInput.files.length) handleFiles(Array.prototype.slice.call(fileInput.files));
+    fileInput.value = '';
+  });
+
+  function handleFiles(files) {
+    var i = 0;
+    function next() {
+      if (i >= files.length) { progressEl.hidden = true; return; }
+      var file = files[i];
+      var isTxt = /\.txt$/i.test(file.name);
+      progressEl.hidden = false;
+      progressEl.textContent = '正在解析第 ' + (i + 1) + '/' + files.length + ' 本：' + file.name;
+      var task = isTxt
+        ? parseTxt(file, function (cur, totalC, chapTitle) {
+            progressEl.textContent = '解析「' + file.name + '」 第 ' + cur + '/' + totalC + ' 节：' + chapTitle;
+          })
+        : parseEpub(file, function (cur, totalC, chapTitle) {
+            progressEl.textContent = '解析「' + file.name + '」 第 ' + cur + '/' + totalC + ' 节：' + chapTitle;
+          });
+      task.then(function (book) {
+        resultsEl.prepend(buildBookCard(book, {}));
+      }).catch(function (err) {
+        resultsEl.prepend(buildErrorCard(file.name, err && err.message ? err.message : String(err)));
+      }).then(function () {
+        i++;
+        next();
+      });
+    }
+    next();
+  }
+
+  clearResultsBtn.addEventListener('click', function () { resultsEl.innerHTML = ''; });
+
+  /* ---------------- 历史记录 ---------------- */
+  var HISTORY_KEY = 'ewc-history';
+
+  function loadHistory() {
+    try { return JSON.parse(localStorage.getItem(HISTORY_KEY)) || []; }
+    catch (e) { return []; }
+  }
+  function saveHistoryData(data) {
+    try {
+      localStorage.setItem(HISTORY_KEY, JSON.stringify(data));
+    } catch (e) {
+      showToast('保存失败，可能是浏览器存储空间已满');
+    }
+  }
+  function addToHistory(book) {
+    var data = loadHistory();
+    data.unshift({
+      id: 'h' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8),
+      fileName: book.fileName,
+      title: book.title,
+      creator: book.creator,
+      total: book.total,
+      encoding: book.encoding || null,
+      chapters: book.chapters.map(function (c) { return { title: c.title, charsNoSpace: c.stats.charsNoSpace }; }),
+      date: new Date().toISOString()
+    });
+    saveHistoryData(data);
+  }
+  function removeFromHistory(id) {
+    saveHistoryData(loadHistory().filter(function (b) { return b.id !== id; }));
+  }
+
+  var historyListEl = document.getElementById('historyList');
+  var historyCountEl = document.getElementById('historyCount');
+  var sortSelect = document.getElementById('sortSelect');
+
+  function renderHistory() {
+    var data = loadHistory();
+    var sortBy = sortSelect.value;
+    if (sortBy === 'count') data.sort(function (a, b) { return b.total.charsNoSpace - a.total.charsNoSpace; });
+    else if (sortBy === 'title') data.sort(function (a, b) { return a.title.localeCompare(b.title, 'zh-CN'); });
+    else data.sort(function (a, b) { return new Date(b.date) - new Date(a.date); });
+
+    historyCountEl.textContent = data.length;
+    historyListEl.innerHTML = '';
+    if (data.length === 0) {
+      historyListEl.innerHTML = '<p class="empty-hint">还没有保存任何记录 · 在上方结果卡片中点击 📥 即可保存</p>';
+      return;
+    }
+    data.forEach(function (rec) {
+      historyListEl.appendChild(buildBookCard(rec, { fromHistory: true, historyId: rec.id }));
+    });
+  }
+
+  sortSelect.addEventListener('change', renderHistory);
+
+  document.getElementById('exportHistory').addEventListener('click', function () {
+    var data = loadHistory();
+    if (data.length === 0) { showToast('暂无历史记录可导出'); return; }
+    var blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement('a');
+    a.href = url;
+    a.download = 'epub-word-count-history.json';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+    showToast('已导出 ' + data.length + ' 条记录');
+  });
+
+  var importBtn = document.getElementById('importHistoryBtn');
+  var importInput = document.getElementById('importHistoryInput');
+  importBtn.addEventListener('click', function () { importInput.click(); });
+  importInput.addEventListener('change', function () {
+    var file = importInput.files[0];
+    if (!file) return;
+    var reader = new FileReader();
+    reader.onload = function () {
+      try {
+        var imported = JSON.parse(reader.result);
+        if (!Array.isArray(imported)) throw new Error('格式不正确');
+        var existing = loadHistory();
+        var merged = imported.concat(existing);
+        saveHistoryData(merged);
+        renderHistory();
+        showToast('已导入 ' + imported.length + ' 条记录');
+      } catch (e) {
+        showToast('导入失败：文件格式不正确');
+      }
+    };
+    reader.readAsText(file);
+    importInput.value = '';
+  });
+
+  document.getElementById('clearHistory').addEventListener('click', function () {
+    if (loadHistory().length === 0) { showToast('历史记录已经是空的'); return; }
+    if (confirm('确定清空全部历史记录吗？此操作不可恢复，建议先导出备份。')) {
+      saveHistoryData([]);
+      renderHistory();
+      showToast('已清空历史记录');
+    }
+  });
+
+  renderHistory();
+
+  /* ---------------- PWA ---------------- */
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', function () {
+      navigator.serviceWorker.register('./sw.js').catch(function () { /* 离线缓存非必需，失败忽略 */ });
+    });
+  }
+})();
+</script>
+</body>
+</html>
