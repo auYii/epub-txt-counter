@@ -1,0 +1,14 @@
+{
+  "name": "EPUB 字数统计器",
+  "short_name": "字数统计",
+  "description": "在浏览器本地解析 EPUB 电子书，统计字数与章节分布，数据不上传服务器。",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#F2EEE3",
+  "theme_color": "#A8311F",
+  "lang": "zh-CN",
+  "icons": [
+    { "src": "icon.svg", "type": "image/svg+xml", "sizes": "any", "purpose": "any" }
+  ]
+}
